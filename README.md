@@ -6,7 +6,7 @@ Send one question to multiple AI chatbots simultaneously. Collect, compare, and 
 
 ### Core
 
-- **Batch Send** – open 23 AI sites in batched tabs (3 at a time), auto-fill and submit your question
+- **Batch Send** – open 26 AI sites in batched tabs (10 at a time), auto-fill and submit your question
 - **Pre-flight Check** – automatically detects unreachable sites and skips them before opening tabs
 - **Prompt Enhancement** – optional prefix strategies: Chain-of-Thought, Step-by-Step, Expert Role, Be Concise, Pros & Cons
 - **Auto-Polling** – detects when each AI finishes responding via DOM stability check (2-minute timeout)
@@ -31,8 +31,9 @@ Send one question to multiple AI chatbots simultaneously. Collect, compare, and 
 - **Per-Site Retry** – one-click retry for any failed site without resending all
 - **Response Stats** – real-time word count and elapsed time per AI
 - **Error Recovery** – graceful handling of tab closure, injection failure, and timeout
-- **Memory Safety** – automatic cleanup of stale tabs, response truncation (50KB), duplicate injection guard
-- **Batched Opening** – tabs open 3 at a time with 800ms intervals to prevent browser stalling
+- **Tab Warm-up** – briefly activates each background tab 3 times within 30 seconds to combat Chrome's background throttling on SPA sites
+- **Memory Safety** – automatic cleanup of stale tabs, response truncation (500KB), duplicate injection guard
+- **Batched Opening** – tabs open 10 at a time with 1.5s intervals to prevent browser stalling
 
 ### Design
 
@@ -42,7 +43,7 @@ Send one question to multiple AI chatbots simultaneously. Collect, compare, and 
 - **Completion Feedback** – shake animation on response arrival, progress bar glow, celebration pulse
 - **Collapsed Cards** – pending sites show as compact list rows; expand on response arrival
 
-## Supported AI Providers (23)
+## Supported AI Providers (26)
 
 ### General — Freemium
 
@@ -53,24 +54,23 @@ Send one question to multiple AI chatbots simultaneously. Collect, compare, and 
 | Claude | https://claude.ai/ |
 | Grok | https://grok.com/ |
 | Copilot | https://copilot.microsoft.com/ |
-| Mistral | https://chat.mistral.ai/ |
-| Poe | https://poe.com/ |
+| Mistral | https://chat.mistral.ai/chat |
 
 ### General — Free
 
 | Site | URL |
 |------|-----|
 | DeepSeek | https://chat.deepseek.com/ |
-| Meta AI | https://www.meta.ai/ |
 | Kimi | https://www.kimi.com/ |
-| Qianwen | https://www.qianwen.com/ |
+| Qwen Think | https://chat.qwen.ai/?thinking=true |
 | Doubao | https://www.doubao.com/chat/ |
 | Yuanbao | https://yuanbao.tencent.com/ |
 | ChatGLM | https://chatglm.cn/ |
 | Yiyan | https://yiyan.baidu.com/ |
+| Baidu Chat | https://chat.baidu.com/search |
+| Sogou AI | https://www.sogou.com/aimode |
 | MiniMax | https://agent.minimax.io/ |
 | HuggingChat | https://huggingface.co/chat/ |
-| Pi | https://pi.ai/ |
 
 ### Specialized — Freemium
 
@@ -83,9 +83,13 @@ Send one question to multiple AI chatbots simultaneously. Collect, compare, and 
 
 | Site | URL |
 |------|-----|
-| Phind | https://www.phind.com/ |
+| NVIDIA-Nemotron | https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b |
+| NVIDIA-MiniMax-M2.5 | https://build.nvidia.com/minimaxai/minimax-m2.5 |
+| NVIDIA-Kimi-K2.5 | https://build.nvidia.com/moonshotai/kimi-k2.5 |
+| NVIDIA-GLM5 | https://build.nvidia.com/z-ai/glm5 |
 | Genspark | https://www.genspark.ai/ |
-| Reddit Answers | https://www.reddit.com/answers/ |
+| Duck.ai | https://duck.ai/ |
+| Reddit | https://www.reddit.com/answers/ |
 
 ## Installation
 
@@ -131,7 +135,8 @@ ask_all_ai/
 ```
 Popup (user input)
   → Background (pre-flight reachability check)
-    → Background (opens tabs in batches of 3)
+    → Background (opens tabs in batches of 10)
+      → Background (tab warm-up: 3 rounds of brief activation over 30s)
       → Content Script (fills input, submits)
         → Content Script (polls for completion via DOM stability)
           → Background (aggregates responses + stats)
@@ -185,3 +190,53 @@ For sites not in `host_permissions`, the extension uses `optional_host_permissio
 - The popup closes when clicking outside; reopen to see current status (state is fully preserved)
 - Custom sites require the user to grant additional host permissions on first use
 - The extension does not select AI models — users should pre-configure their preferred model on each site
+
+
+
+## DOM Debugging Snippet
+
+Run this in the browser console (F12) on any AI chat page to test input injection and copy the full DOM for troubleshooting:
+
+```js
+setTimeout(() => {
+  const selectors = [
+    '[data-slate-editor="true"][contenteditable="true"]',
+    '[data-lexical-editor="true"][contenteditable="true"]',
+    '[role="textbox"][contenteditable="true"]',
+    '[contenteditable="true"]',
+    'textarea'
+  ];
+  let input = null;
+  for (const s of selectors) {
+    input = document.querySelector(s);
+    if (input) break;
+  }
+  if (!input) { console.error("input not found"); return; }
+
+  input.focus();
+  if (input.contentEditable === "true") {
+    const sel = window.getSelection();
+    sel.selectAllChildren(input);
+    sel.collapseToEnd();
+    document.execCommand("insertText", false, "hello from AskAll");
+  } else {
+    const nSet = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype, "value"
+    ).set;
+    nSet.call(input, "hello from AskAll");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  navigator.clipboard.writeText(document.documentElement.outerHTML)
+    .then(() => console.log("DOM copied to clipboard"))
+    .catch(() => {
+      const t = document.createElement("textarea");
+      t.value = document.documentElement.outerHTML;
+      document.body.appendChild(t);
+      t.select();
+      document.execCommand("copy");
+      document.body.removeChild(t);
+      console.log("DOM copied (fallback)");
+    });
+}, 500);
+```

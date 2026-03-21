@@ -2,20 +2,61 @@
 // background orchestrator: tabs, injection, timing, history, retry.
 
 const TAB_LOAD_TIMEOUT_MS = 15000;
-const PAGE_READY_CHECK_DELAY_MS = 15000;
-const MAX_RELOAD_RETRIES = 2;
+const PAGE_READY_CHECK_DELAY_MS = 3000;
+const MAX_RELOAD_RETRIES = 0;
 const INJECT_RETRY_DELAY_MS = 2000;
 const INJECT_MAX_RETRIES = 5;
-const MAX_RESPONSE_LENGTH = 50000;
+const MAX_RESPONSE_LENGTH = 500000;
 const MAX_HISTORY_ITEMS = 50;
 const BATCH_SIZE = 10;
 const BATCH_DELAY_MS = 1500;
+const TAB_WARM_ROUNDS = 3;
+const TAB_WARM_INTERVAL_MS = 10000;
+const TAB_WARM_FOCUS_MS = 800;
+const TAB_WARM_POST_ACTION_MS = 500;
+const SLOW_SITE_EXTRA_DELAY_MS = 5000;
+const SLOW_SITE_HOSTNAMES = [];
 
 // { tabId -> { url, hostname, status, response, createdAt, doneAt } }
 let activeTabs = {};
 let isSending = false;
 let currentQuestion = "";
 let panelWindowId = null;
+let askallTabId = null;
+
+// open AskAll in a full tab when extension icon is clicked
+chrome.action.onClicked.addListener(() => {
+  const pageUrl = chrome.runtime.getURL("popup/popup.html?tab=1");
+  if (askallTabId) {
+    chrome.tabs.get(askallTabId, (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+        askallTabId = null;
+        chrome.tabs.create({ url: pageUrl }, (t) => { askallTabId = t.id; });
+      } else {
+        chrome.tabs.update(askallTabId, { active: true });
+        chrome.windows.update(tab.windowId, { focused: true });
+      }
+    });
+  } else {
+    chrome.tabs.create({ url: pageUrl }, (t) => { askallTabId = t.id; });
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === askallTabId) { askallTabId = null; }
+});
+
+// reopen AskAll tab after extension reload
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "update" || details.reason === "install") {
+    chrome.storage.local.get("askall_reopen", (r) => {
+      if (r && r.askall_reopen) {
+        chrome.storage.local.remove("askall_reopen");
+        chrome.tabs.create({ url: r.askall_reopen }, (t) => { askallTabId = t.id; });
+      }
+    });
+  }
+});
 
 // ============================================================
 //  HELPERS
@@ -78,6 +119,7 @@ function buildSummary() {
       elapsedMs: elapsed,
       wordCount: info._cachedWordCount || 0,
       errorLog: info.errorLog || null,
+      stabilityProgress: info.stabilityProgress || 0,
     };
   }
   return summary;
@@ -218,7 +260,6 @@ async function openAndInject(url, question) {
     return null;
   }
 
-  await closeExistingTabsForHostname(hostname);
 
   let tab;
   try {
@@ -244,36 +285,25 @@ async function openAndInject(url, question) {
     return tabId;
   }
 
-  // check if page loaded properly; reload if blank/stuck
-  let pageReady = false;
-  for (let reload = 0; reload <= MAX_RELOAD_RETRIES; reload++) {
-    await new Promise((r) => setTimeout(r, reload === 0 ? 2000 : PAGE_READY_CHECK_DELAY_MS));
+  // slow sites (anti-bot, delayed loading) need extra wait
+  var isSlowSite = SLOW_SITE_HOSTNAMES.includes(hostname);
+  var spaDelay = isSlowSite ? 1500 + SLOW_SITE_EXTRA_DELAY_MS : 1500;
+  await new Promise((r) => setTimeout(r, spaDelay));
 
-    if (!safeGetTab(tabId)) { return tabId; }
-
-    pageReady = await checkPageReady(tabId);
-    if (pageReady) { break; }
-
-    if (reload < MAX_RELOAD_RETRIES) {
-      try {
-        await chrome.tabs.reload(tabId);
-        await waitForTabComplete(tabId);
-      } catch (_) { break; }
-    }
-  }
+  if (!safeGetTab(tabId)) { return tabId; }
 
   const injected = await ensureContentScriptInjected(tabId);
   if (!injected) {
     const tabInfo = safeGetTab(tabId);
     if (tabInfo) {
       tabInfo.status = "error";
-      tabInfo.response = "No permission to inject into this site.";
+      tabInfo.response = "No permission to inject into this site. Please check if you are logged in and the site is accessible.";
       tabInfo.doneAt = Date.now();
     }
     return tabId;
   }
 
-  await new Promise((r) => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 500));
 
   let messageDelivered = false;
   for (let attempt = 0; attempt < INJECT_MAX_RETRIES; attempt++) {
@@ -307,7 +337,7 @@ async function openAndInject(url, question) {
     const tabInfo = safeGetTab(tabId);
     if (tabInfo) {
       tabInfo.status = "error";
-      tabInfo.response = "Failed to inject question into page.";
+      tabInfo.response = "Failed to inject question into page. Please check: 1) Are you logged in? 2) Does the site require a subscription or credits? 3) Is there a CAPTCHA or popup blocking the input?";
       tabInfo.doneAt = Date.now();
     }
   }
@@ -337,8 +367,76 @@ async function openInBatches(urls, question) {
 }
 
 // ============================================================
+//  TAB WARM-UP (combat background throttling)
+// ============================================================
+
+async function warmTabs(tabIds) {
+  const validIds = tabIds.filter((id) => id != null && !isNaN(id));
+  if (validIds.length === 0) { return; }
+
+  for (let round = 0; round < TAB_WARM_ROUNDS; round++) {
+    if (round > 0) {
+      await new Promise((r) => setTimeout(r, TAB_WARM_INTERVAL_MS));
+    }
+
+    let originalTab = null;
+    try {
+      const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (tabs && tabs.length > 0) { originalTab = tabs[0]; }
+    } catch (_) {
+      // query may fail if no focused window
+    }
+
+    for (const tabId of validIds) {
+      const info = safeGetTab(tabId);
+      if (!info) { continue; }
+      const terminal = info.status === "done" || info.status === "error"
+        || info.status === "timeout" || info.status === "skipped";
+      if (terminal) { continue; }
+
+      try {
+        await chrome.tabs.update(tabId, { active: true });
+        // let the tab wake up from background throttle
+        await new Promise((r) => setTimeout(r, TAB_WARM_FOCUS_MS));
+        // retry submit (Enter / click) while tab is still active
+        try { await chrome.tabs.sendMessage(tabId, { type: "ASKALL_WARM" }); } catch (_) {}
+        // let the page process the submit before switching away
+        await new Promise((r) => setTimeout(r, TAB_WARM_POST_ACTION_MS));
+      } catch (_) {
+        // tab already closed
+      }
+    }
+
+    if (originalTab) {
+      try {
+        await chrome.tabs.update(originalTab.id, { active: true });
+        await chrome.windows.update(originalTab.windowId, { focused: true });
+      } catch (_) {
+        // original tab may have been closed
+      }
+    }
+  }
+}
+
+// ============================================================
 //  AUTO-CLOSE PANEL WHEN ALL DONE
 // ============================================================
+
+function openNewPanel(msg, sendResponse) {
+  const width = msg.width || 600;
+  const height = msg.height || 620;
+  chrome.windows.create({
+    url: chrome.runtime.getURL("popup/popup.html?detached=1"),
+    type: "popup",
+    width: width,
+    height: height,
+    top: 0,
+    focused: true,
+  }, (win) => {
+    panelWindowId = win.id;
+    sendResponse({ windowId: win.id });
+  });
+}
 
 function checkAllDoneAndClosePanel() {
   if (!panelWindowId) { return; }
@@ -375,7 +473,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       info.status = "error";
       info.doneAt = Date.now();
       if (!info.response) {
-        info.response = "Tab was closed before response completed.";
+        info.response = "Tab was closed before response completed. Please keep AI tabs open until all responses are collected.";
       }
     }
   }
@@ -436,16 +534,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const tabInfo = tabId ? safeGetTab(tabId) : null;
     if (tabInfo) {
       const wasDone = tabInfo.status === "done" || tabInfo.status === "timeout" || tabInfo.status === "error";
-      tabInfo.status = msg.status;
+      if (!wasDone || (msg.status === "done" && msg.response)) {
+        tabInfo.status = msg.status;
+      }
       tabInfo.response = truncateResponse(msg.response) || tabInfo.response;
+      tabInfo.stabilityProgress = msg.stabilityProgress || 0;
       const isNowDone = msg.status === "done" || msg.status === "timeout";
       if (!wasDone && isNowDone) {
         tabInfo.doneAt = Date.now();
-        // auto-close tab after response collected
-        setTimeout(() => {
-          try { chrome.tabs.remove(tabId); } catch (_) { /* already closed */ }
-        }, 1000);
-        // check if all tasks done → auto-close panel window
         checkAllDoneAndClosePanel();
       }
     }
@@ -480,48 +576,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     saveToHistory(question, validUrls);
 
-    // pre-flight: check which sites are reachable before opening tabs
-    batchCheckReachability(validUrls).then(({ reachable, unreachable }) => {
-
-      // register unreachable sites immediately so popup can show them
-      for (const url of unreachable) {
-        let hostname;
-        try { hostname = new URL(url).hostname; } catch (_) { continue; }
-        const fakeTabId = "skip_" + hostname;
-        activeTabs[fakeTabId] = {
-          url: url,
-          hostname: hostname,
-          status: "skipped",
-          response: "Site unreachable — skipped (network check failed).",
-          createdAt: Date.now(),
-          doneAt: Date.now(),
-        };
-      }
-
-      if (reachable.length === 0) {
+    openInBatches(validUrls, question)
+      .then((tabIds) => {
         isSending = false;
         sendResponse({
           success: true,
-          tabIds: [],
-          skipped: unreachable,
+          tabIds: tabIds,
+          skipped: [],
         });
-        return;
-      }
-
-      openInBatches(reachable, question)
-        .then((tabIds) => {
-          isSending = false;
-          sendResponse({
-            success: true,
-            tabIds: tabIds,
-            skipped: unreachable,
-          });
-        })
-        .catch(() => {
-          isSending = false;
-          sendResponse({ success: false, error: "Unexpected error." });
-        });
-    });
+        warmTabs(tabIds);
+      })
+      .catch(() => {
+        isSending = false;
+        sendResponse({ success: false, error: "Unexpected error." });
+      });
 
     return true;
   }
@@ -548,10 +616,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const resp = await chrome.tabs.sendMessage(tabId, { type: "ASKALL_COLLECT" });
         if (resp) {
-          const wasDone = tabInfo.status === "done" || tabInfo.status === "timeout";
-          tabInfo.status = resp.status;
+          const isTerminal = tabInfo.status === "done" || tabInfo.status === "timeout" || tabInfo.status === "error";
+          if (!isTerminal || (resp.status === "done" && resp.response)) {
+            tabInfo.status = resp.status;
+          }
           tabInfo.response = truncateResponse(resp.response) || tabInfo.response;
-          if (!wasDone && (resp.status === "done" || resp.status === "timeout")) {
+          tabInfo.stabilityProgress = resp.stabilityProgress || 0;
+          if (!isTerminal && (resp.status === "done" || resp.status === "timeout")) {
             tabInfo.doneAt = Date.now();
           }
         }
@@ -560,7 +631,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           tabInfo.status = "error";
           tabInfo.doneAt = Date.now();
           if (!tabInfo.response) {
-            tabInfo.response = "Connection lost with tab.";
+            tabInfo.response = "Connection lost with tab. The page may have reloaded or navigated away. Try clicking Retry.";
           }
         }
       }
@@ -602,6 +673,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "ASKALL_STOP_ALL") {
     stopAllContentPolling();
+    // close all tabs opened by AskAll
+    for (const tabIdStr of Object.keys(activeTabs)) {
+      const tabId = parseInt(tabIdStr, 10);
+      if (!isNaN(tabId)) {
+        try { chrome.tabs.remove(tabId); } catch (_) { /* already closed */ }
+      }
+    }
     activeTabs = {};
     currentQuestion = "";
     isSending = false;
@@ -612,26 +690,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // persistent panel window management
   if (msg.type === "ASKALL_OPEN_PANEL") {
     if (panelWindowId) {
-      try {
-        await chrome.windows.update(panelWindowId, { focused: true });
-        sendResponse({ windowId: panelWindowId });
-        return false;
-      } catch (_) {
-        panelWindowId = null;
-      }
+      chrome.windows.update(panelWindowId, { focused: true }, () => {
+        if (chrome.runtime.lastError) {
+          panelWindowId = null;
+        } else {
+          sendResponse({ windowId: panelWindowId });
+          return;
+        }
+        openNewPanel(msg, sendResponse);
+      });
+      return true;
     }
-    const width = msg.width || 600;
-    const height = msg.height || 620;
-    chrome.windows.create({
-      url: chrome.runtime.getURL("popup/popup.html?detached=1"),
-      type: "popup",
-      width: width,
-      height: height,
-      focused: true,
-    }, (win) => {
-      panelWindowId = win.id;
-      sendResponse({ windowId: win.id });
-    });
+    openNewPanel(msg, sendResponse);
     return true;
   }
 
@@ -665,9 +735,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // collect debug diagnostics from all error/timeout tabs
   if (msg.type === "ASKALL_DEBUG_ALL") {
-    const targets = Object.entries(activeTabs).filter(([_, info]) => {
-      return info.status === "error" || info.status === "timeout";
-    });
+    const targets = Object.entries(activeTabs);
 
     if (targets.length === 0) {
       sendResponse({ debugEntries: [] });

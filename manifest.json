@@ -18,25 +18,23 @@
     "https://chat.deepseek.com/*",
     "https://grok.com/*",
     "https://www.kimi.com/*",
-    "https://www.qianwen.com/*",
+    "https://chat.qwen.ai/*",
     "https://www.doubao.com/*",
     "https://chat.mistral.ai/*",
     "https://www.reddit.com/*",
     "https://copilot.microsoft.com/*",
-    "https://www.meta.ai/*",
     "https://yuanbao.tencent.com/*",
     "https://chatglm.cn/*",
-    "https://yiyan.baidu.com/*",
-    "https://poe.com/*",
-    "https://huggingface.co/*",
-    "https://www.phind.com/*",
-    "https://claude.ai/*"
+    "https://chat.baidu.com/*",
+    "https://www.sogou.com/*",
+    "https://claude.ai/*",
+    "https://duck.ai/*",
+    "https://build.nvidia.com/*"
   ],
   "optional_host_permissions": [
     "https://*/*"
   ],
   "action": {
-    "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -58,19 +56,18 @@
         "https://chat.deepseek.com/*",
         "https://grok.com/*",
         "https://www.kimi.com/*",
-        "https://www.qianwen.com/*",
+        "https://chat.qwen.ai/*",
         "https://www.doubao.com/*",
         "https://chat.mistral.ai/*",
         "https://www.reddit.com/*",
         "https://copilot.microsoft.com/*",
-        "https://www.meta.ai/*",
         "https://yuanbao.tencent.com/*",
         "https://chatglm.cn/*",
-        "https://yiyan.baidu.com/*",
-        "https://poe.com/*",
-        "https://huggingface.co/*",
-        "https://www.phind.com/*",
-        "https://claude.ai/*"
+        "https://chat.baidu.com/*",
+        "https://www.sogou.com/*",
+        "https://claude.ai/*",
+        "https://duck.ai/*",
+        "https://build.nvidia.com/*"
       ],
       "js": [
         "content/site-adapters.js",

@@ -7,119 +7,155 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
 
-    <header class="header">
+  <!-- top bar -->
+  <header class="topbar">
+    <div class="topbar-inner">
       <h1 class="logo">AskAll</h1>
       <span class="tagline">One question, every AI.</span>
-      <div class="header-controls">
-        <div class="size-switcher" title="Panel size">
-          <button class="size-btn" data-size="s">S</button>
-          <button class="size-btn active" data-size="m">M</button>
-          <button class="size-btn" data-size="l">L</button>
-        </div>
+      <div class="topbar-right">
+        <span id="live-counter" class="live-counter hidden">0 / 0</span>
         <div class="theme-switcher">
           <button class="theme-btn" data-theme="light" title="Ink on paper">Light</button>
           <button class="theme-btn active" data-theme="lumen" title="Warm clarity">Lumen</button>
           <button class="theme-btn" data-theme="carbon" title="Industrial precision">Carbon</button>
         </div>
       </div>
-    </header>
+    </div>
+    <p class="notice"><strong>Log in to each AI site and select your preferred model beforehand.</strong> Your choice is saved automatically. <span class="notice-tip">Debug tip: on any AI page, press F12 → Console → run <code>copy(document.documentElement.outerHTML);</code> to copy full DOM for troubleshooting.</span></p>
+  </header>
 
-    <p class="notice"><strong>Please log in to each AI site beforehand.</strong> This extension does not handle login or authorization.</p>
+  <main class="main">
 
-    <!-- question + history + templates toolbar -->
-    <section class="section">
-      <div class="label toolbar-label">
-        <span>Question</span>
-        <div class="toolbar-actions">
-          <button id="history-btn" class="toolbar-btn" title="Query history">History</button>
-          <button id="tpl-save-btn" class="toolbar-btn" title="Save as template">Save</button>
-          <button id="tpl-load-btn" class="toolbar-btn" title="Load template">Templates</button>
+    <!-- LEFT: input panel -->
+    <aside class="panel panel-input">
+
+      <section class="section">
+        <div class="label toolbar-label">
+          <span>Question</span>
+          <div class="toolbar-actions">
+            <button id="history-btn" class="toolbar-btn" title="Query history">History</button>
+            <button id="tpl-save-btn" class="toolbar-btn" title="Save as template">Save</button>
+            <button id="tpl-load-btn" class="toolbar-btn" title="Load template">Templates</button>
+          </div>
+        </div>
+        <textarea id="question" class="textarea" rows="5"
+          placeholder="What would you like to ask? (Ctrl+Enter to send)"></textarea>
+        <div id="history-panel" class="dropdown-panel hidden"></div>
+        <div id="tpl-panel" class="dropdown-panel hidden"></div>
+      </section>
+
+      <section class="section">
+        <label class="label">Prompt Enhancement</label>
+        <div class="strategies">
+          <span class="tip-wrap tip-wrap-up">
+            <label class="chip"><input type="checkbox" value="cot" class="strategy-cb"><span>Chain-of-Thought</span></label>
+            <span class="tip-bubble">Prepends "Let's think step by step" — encourages the AI to show its reasoning process before giving a final answer.</span>
+          </span>
+          <span class="tip-wrap tip-wrap-up">
+            <label class="chip"><input type="checkbox" value="step" class="strategy-cb"><span>Step-by-Step</span></label>
+            <span class="tip-bubble">Asks the AI to break its answer into numbered steps, making complex answers easier to follow.</span>
+          </span>
+          <span class="tip-wrap tip-wrap-up">
+            <label class="chip"><input type="checkbox" value="expert" class="strategy-cb"><span>Expert Role</span></label>
+            <span class="tip-bubble">Tells the AI to respond as a world-class expert in the relevant field, often producing more detailed and authoritative answers.</span>
+          </span>
+          <span class="tip-wrap tip-wrap-up">
+            <label class="chip"><input type="checkbox" value="concise" class="strategy-cb"><span>Be Concise</span></label>
+            <span class="tip-bubble">Instructs the AI to keep its response short and direct, skipping lengthy explanations.</span>
+          </span>
+          <span class="tip-wrap tip-wrap-up">
+            <label class="chip"><input type="checkbox" value="compare" class="strategy-cb"><span>Pros &amp; Cons</span></label>
+            <span class="tip-bubble">Asks the AI to analyze both advantages and disadvantages, useful for decision-making questions.</span>
+          </span>
+        </div>
+      </section>
+
+      <section class="section">
+        <label class="label">
+          AI Providers
+          <button id="toggle-all-btn" class="toggle-all-btn" title="Toggle all">All</button>
+        </label>
+        <div id="site-list" class="site-list-grouped"></div>
+      </section>
+
+      <section class="section">
+        <label class="label" for="custom-sites">Custom Sites <span class="hint">(one URL per line, max 10)</span></label>
+        <textarea id="custom-sites" class="textarea textarea-sm" rows="2"
+          placeholder="https://example.com/chat"></textarea>
+      </section>
+
+      <div class="actions-primary">
+        <button id="send-btn" class="btn btn-send">Send to All</button>
+      </div>
+      <div class="actions-secondary">
+        <span class="tip-wrap">
+          <button id="reset-btn" class="btn-text btn-text-danger">Reset</button>
+          <span class="tip-bubble">Close all AI tabs opened by AskAll and clear current results. Your settings and history are preserved.</span>
+        </span>
+        <span class="tip-wrap">
+          <button id="reload-btn" class="btn-text">Reload Extension</button>
+          <span class="tip-bubble">Restart the extension to apply adapter changes. Use after editing site-adapters.js or updating the extension files.</span>
+        </span>
+      </div>
+
+    </aside>
+
+    <!-- RIGHT: output panel -->
+    <section class="panel panel-output">
+
+      <div id="status-bar" class="status-bar hidden">
+        <div class="status-text" id="status-text">
+          <span class="status-dot active"></span>
+          <span id="status-label">Waiting...</span>
+          <span id="status-breakdown" class="status-breakdown"></span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-seg seg-done" id="seg-done"></div>
+          <div class="progress-seg seg-streaming" id="seg-streaming"></div>
+          <div class="progress-seg seg-pending" id="seg-pending"></div>
+          <div class="progress-seg seg-empty" id="seg-empty"></div>
+          <div class="progress-seg seg-error" id="seg-error"></div>
+          <div class="progress-seg seg-skipped" id="seg-skipped"></div>
         </div>
       </div>
-      <textarea id="question" class="textarea" rows="4"
-        placeholder="What would you like to ask? (Ctrl+Enter to send)"></textarea>
-      <!-- history dropdown (hidden by default) -->
-      <div id="history-panel" class="dropdown-panel hidden"></div>
-      <!-- templates dropdown (hidden by default) -->
-      <div id="tpl-panel" class="dropdown-panel hidden"></div>
-    </section>
 
-    <section class="section">
-      <label class="label">Prompt Enhancement</label>
-      <div class="strategies">
-        <label class="chip">
-          <input type="checkbox" value="cot" class="strategy-cb">
-          <span>Chain-of-Thought</span>
-        </label>
-        <label class="chip">
-          <input type="checkbox" value="step" class="strategy-cb">
-          <span>Step-by-Step</span>
-        </label>
-        <label class="chip">
-          <input type="checkbox" value="expert" class="strategy-cb">
-          <span>Expert Role</span>
-        </label>
-        <label class="chip">
-          <input type="checkbox" value="concise" class="strategy-cb">
-          <span>Be Concise</span>
-        </label>
-        <label class="chip">
-          <input type="checkbox" value="compare" class="strategy-cb">
-          <span>Pros &amp; Cons</span>
-        </label>
-      </div>
-    </section>
-
-    <section class="section">
-      <label class="label">
-        AI Providers
-        <button id="toggle-all-btn" class="toggle-all-btn" title="Toggle all">All</button>
-      </label>
-      <div id="site-list" class="site-list-grouped"></div>
-    </section>
-
-    <section class="section">
-      <label class="label" for="custom-sites">Custom Sites <span class="hint">(one URL per line, max 10)</span></label>
-      <textarea id="custom-sites" class="textarea textarea-sm" rows="2"
-        placeholder="https://example.com/chat"></textarea>
-    </section>
-
-    <div class="actions">
-      <button id="send-btn" class="btn btn-primary">Send to All</button>
-      <button id="collect-btn" class="btn btn-secondary" disabled>Collect</button>
-      <button id="reset-btn" class="btn btn-reset" title="Clear responses and start fresh">Reset</button>
-    </div>
-
-    <div id="status-bar" class="status-bar hidden">
-      <div class="status-text" id="status-text">
-        <span class="status-dot active"></span>
-        <span id="status-label">Waiting...</span>
-      </div>
-      <div class="progress-track">
-        <div class="progress-fill active" id="progress-fill"></div>
-      </div>
-    </div>
-
-    <section id="responses-section" class="section hidden">
-      <div class="responses-header">
-        <label class="label">Responses</label>
-        <div class="responses-actions">
-          <button id="copy-debug-btn" class="btn btn-debug" title="Copy error diagnostics for debugging">Copy Debug</button>
-          <button id="export-md-btn" class="btn btn-export" title="Export as Markdown">Export MD</button>
-          <button id="copy-all-btn" class="btn btn-copy">Copy All</button>
+      <div id="responses-section" class="hidden">
+        <div class="responses-header">
+          <label class="label">Responses</label>
+          <span id="eta-label" class="eta-label hidden"></span>
+          <div class="output-actions">
+            <button id="collect-btn" class="btn-icon" disabled title="Refresh responses from all tabs">
+              <span class="btn-icon-label">Refresh</span>
+            </button>
+            <button id="copy-all-btn" class="btn-action btn-action-primary" title="Copy all responses">
+              <span class="btn-action-label">Copy All</span>
+            </button>
+            <button id="export-md-btn" class="btn-action btn-action-outline" title="Download as Markdown report">
+              <span class="btn-action-label">Export</span>
+            </button>
+            <button id="copy-debug-btn" class="btn-action btn-action-ghost" title="Copy diagnostics for debugging">
+              <span class="btn-action-label">Debug</span>
+            </button>
+          </div>
         </div>
+        <div id="responses-container" class="responses-container"></div>
       </div>
-      <div id="responses-container" class="responses-container"></div>
+
+      <div id="empty-state" class="empty-state">
+        <div class="empty-state-icon">AA</div>
+        <p class="empty-state-text">Responses will appear here after you send a question.</p>
+      </div>
+
     </section>
 
-    <div id="toast" class="toast">
-      <span class="toast-icon">&#10003;</span>
-      <span id="toast-text">Copied to clipboard</span>
-    </div>
+  </main>
 
+  <div id="toast" class="toast">
+    <span class="toast-icon">&#10003;</span>
+    <span id="toast-text">Copied to clipboard</span>
   </div>
+
   <script src="popup.js"></script>
 </body>
 </html>

@@ -9,7 +9,6 @@
 //   useEnterToSubmit – simulate Enter key instead of clicking a button
 //   waitBeforeSubmit – ms to wait after filling before submitting
 //   fillInput(el, text) – (optional) custom input fill function
-//   extractResponse()   – (optional) custom response extraction
 
 // ---- shared fill helpers ----
 
@@ -40,7 +39,18 @@ function __askall_fillReactTextarea(el, text) {
 // that React/Vue frameworks reliably capture
 function __askall_fillViaExecCommand(el, text) {
   el.focus();
-  el.select();
+  if (el.select) {
+    try { el.select(); } catch (_) { /* contenteditable doesn't support select() */ }
+  }
+  if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+    document.execCommand("selectAll", false, null);
+  } else {
+    var sel = window.getSelection();
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
   document.execCommand("insertText", false, text);
 }
 
@@ -68,25 +78,30 @@ window.__ASKALL_ADAPTERS = {
   },
 
   "www.perplexity.ai": {
-    inputSelector: 'textarea',
+    inputSelector: '#ask-input[data-lexical-editor="true"], [data-lexical-editor="true"][contenteditable="true"], textarea',
     submitSelector: 'button[aria-label="Submit"], button[aria-label="Ask"], button[type="submit"], button[class*="submit"], button[class*="send"]',
     responseSelector: '[class*="prose"], [class*="markdown"], [class*="response-text"], [class*="answer"]',
-    thinkingSelector: '[class*="loading"], [class*="animate-pulse"], [class*="skeleton"], [class*="searching"]',
+    thinkingSelector: '[class*="animate-pulse"], [class*="skeleton"], [class*="searching"]',
     useEnterToSubmit: false,
     waitBeforeSubmit: 1000,
     fillInput(el, text) {
-      __askall_fillReactTextarea(el, text);
+      if (el.contentEditable === "true") {
+        __askall_fillViaExecCommand(el, text);
+      } else {
+        __askall_fillReactTextarea(el, text);
+      }
     }
   },
 
   "gemini.google.com": {
-    inputSelector: '.ql-editor[contenteditable="true"], rich-textarea [contenteditable="true"], .input-area-container textarea',
-    submitSelector: 'button.send-button, button[aria-label="Send message"], .send-button-container button',
-    responseSelector: 'message-content, .model-response-text, .response-container',
+    inputSelector: '.ql-editor[contenteditable="true"], rich-textarea [contenteditable="true"], [contenteditable="true"], .input-area-container textarea',
+    submitSelector: 'button[aria-label="Send message"], button.send-button, .send-button-container button',
+    responseSelector: 'message-content, .model-response-text, .response-container, [class*="markdown"]',
     thinkingSelector: '.loading-indicator, .thinking-indicator, model-response[is-streaming]',
     useEnterToSubmit: false,
     waitBeforeSubmit: 600,
     fillInput(el, text) {
+      el.focus();
       __askall_fillContentEditable(el, text);
     }
   },
@@ -110,12 +125,15 @@ window.__ASKALL_ADAPTERS = {
   },
 
   "agent.minimax.io": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[type="submit"], button[class*="send"], [class*="submit"]',
-    responseSelector: '[class*="assistant"], [class*="bot-message"], [class*="response"]',
-    thinkingSelector: '[class*="loading"], [class*="generating"], [class*="typing"]',
-    useEnterToSubmit: true,
+    inputSelector: '.tiptap-editor[contenteditable="true"], .ProseMirror[contenteditable="true"], textarea, [contenteditable="true"]',
+    submitSelector: '#input-send-icon, button[type="submit"], button[class*="send"], [class*="submit"]',
+    responseSelector: '[class*="assistant"], [class*="bot-message"], [class*="response"], [class*="markdown"]',
+    thinkingSelector: '[class*="generating"], [class*="typing"]',
+    useEnterToSubmit: false,
     waitBeforeSubmit: 500,
+    fillInput(el, text) {
+      __askall_fillViaExecCommand(el, text);
+    }
   },
 
   "chat.deepseek.com": {
@@ -131,173 +149,140 @@ window.__ASKALL_ADAPTERS = {
   },
 
   "grok.com": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[aria-label*="send" i], button[type="submit"]',
-    responseSelector: '[class*="message-bubble"], [class*="response"], [class*="assistant"]',
-    thinkingSelector: '[class*="loading"], [class*="generating"], [class*="typing"]',
+    inputSelector: '.ProseMirror[contenteditable="true"], .tiptap[contenteditable="true"], [contenteditable="true"]',
+    submitSelector: 'button[aria-label="Submit"]',
+    responseSelector: '[class*="message-bubble"], [class*="response"], [class*="assistant"], [class*="markdown"]',
+    thinkingSelector: '[class*="generating"], [class*="typing"]',
     useEnterToSubmit: true,
-    waitBeforeSubmit: 500,
-  },
-
-  "www.kimi.com": {
-    inputSelector: '[contenteditable="true"][role="textbox"], [contenteditable="true"][class*="editor"], [contenteditable="true"]',
-    submitSelector: '[class*="send"]:not([disabled]), [class*="sendBtn"], button[class*="send"]',
-    responseSelector: '[class*="markdown"], [class*="message-content"], [class*="assistant"]',
-    thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"]',
-    useEnterToSubmit: false,
     waitBeforeSubmit: 800,
     fillInput(el, text) {
-      // kimi uses Lexical editor — execCommand is the only reliable method
-      __askall_fillContentEditable(el, text);
+      el.focus();
+      __askall_fillViaExecCommand(el, text);
     }
   },
 
-  "www.qianwen.com": {
-    inputSelector: "textarea, [contenteditable='true']",
-    submitSelector: '[class*="operateBtn"], [class*="send-btn"], [class*="submit"]',
-    responseSelector: '[class*="message--assistant"], [class*="markdown-body"], [class*="answer-content"], [class*="text-message"]',
-    thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"], [class*="pending"]',
+  "www.kimi.com": {
+    inputSelector: '[data-lexical-editor="true"][contenteditable="true"], .chat-input-editor[contenteditable="true"], [contenteditable="true"][role="textbox"], [contenteditable="true"]',
+    submitSelector: '.send-button-container:not(.disabled), [class*="send-button-container"]:not([class*="disabled"])',
+    responseSelector: '.segment-assistant .markdown-container .markdown, .segment-assistant .markdown',
+    thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"], [class*="thinking"]',
     useEnterToSubmit: false,
-    waitBeforeSubmit: 600,
+    waitBeforeSubmit: 800,
     fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillReactTextarea(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
+      el.focus();
+      __askall_fillViaExecCommand(el, text);
+    }
+  },
+
+
+  "chat.qwen.ai": {
+    inputSelector: 'textarea.message-input-textarea, textarea[class*="message-input"], textarea',
+    submitSelector: 'button.send-button, .chat-prompt-send-button button, .message-input-right-button-send button',
+    responseSelector: '[class*="markdown"], [class*="message-content"], [class*="prose"], [class*="assistant"]',
+    thinkingSelector: 'button.stop-button, [class*="generating"], [class*="typing"]',
+    useEnterToSubmit: true,
+    waitBeforeSubmit: 1200,
+    fillInput(el, text) {
+      __askall_fillReactTextarea(el, text);
     }
   },
 
   "www.doubao.com": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: '#flow-end-msg-send, [data-testid="chat_input_send_button"], [class*="send-btn"], button[class*="send"]',
+    inputSelector: 'textarea[data-testid="chat_input_input"], textarea, [contenteditable="true"]',
+    submitSelector: '[data-testid="send_btn"], #flow-end-msg-send, [data-testid="chat_input_send_button"], [class*="send-btn"], button[class*="send"]',
     responseSelector: '[class*="markdown"], [class*="message-content"], [class*="receive"]',
-    thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"]',
+    thinkingSelector: '[class*="generating"]',
     useEnterToSubmit: true,
-    waitBeforeSubmit: 500,
+    waitBeforeSubmit: 600,
     fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillViaExecCommand(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
+      el.focus();
+      __askall_fillViaExecCommand(el, text);
     }
   },
 
   "chat.mistral.ai": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[type="submit"], button[aria-label*="send" i], button[class*="send"]',
+    inputSelector: 'textarea, [contenteditable="true"], [role="textbox"]',
+    submitSelector: 'button[type="submit"], button[aria-label*="Send" i], button[class*="send"]',
     responseSelector: '[class*="prose"], [class*="markdown"], [class*="assistant"], [class*="message-content"]',
     thinkingSelector: '[class*="loading"], [class*="generating"], [class*="stop"], [class*="typing"]',
     useEnterToSubmit: false,
     waitBeforeSubmit: 600,
     fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillReactTextarea(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
+      __askall_fillViaExecCommand(el, text);
     }
   },
+  "duck.ai": {
+    inputSelector: 'textarea[name="user-prompt"], textarea, [role="textbox"], [contenteditable="true"]',
+    submitSelector: 'button[aria-label="Send"], button[type="submit"]',
+    responseSelector: '[class*="markdown"], [class*="response"], [class*="assistant"], [class*="message"]',
+    thinkingSelector: '[class*="generating"], [class*="typing"]',
+    useEnterToSubmit: true,
+    waitBeforeSubmit: 600,
+    fillInput(el, text) {
+      __askall_fillReactTextarea(el, text);
+    }
+  },
+
   "www.reddit.com": {
-    inputSelector: 'textarea, [contenteditable="true"], input[type="text"]',
+    inputSelector: 'textarea:not(.g-recaptcha-response), input[type="text"], [role="textbox"], [contenteditable="true"]',
     submitSelector: 'button[type="submit"], button[aria-label*="send" i], button[aria-label*="ask" i], button[class*="submit"]',
-    responseSelector: '[class*="answer"], [class*="markdown"], [class*="response"], [class*="message"]',
+    responseSelector: '[class*="answer"]:not(.g-recaptcha-response), [class*="markdown"], [class*="response"], [class*="message"]',
     thinkingSelector: '[class*="loading"], [class*="generating"], [class*="thinking"], [class*="spinner"]',
-    useEnterToSubmit: false,
+    useEnterToSubmit: true,
     waitBeforeSubmit: 800,
     fillInput(el, text) {
-      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-        __askall_fillReactTextarea(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
+      el.focus();
+      el.click();
+      __askall_fillViaExecCommand(el, text);
     }
   },
 
   "claude.ai": {
     inputSelector: '[contenteditable="true"], textarea',
-    submitSelector: 'button[aria-label*="Send" i], button[type="submit"], button[class*="send"]',
-    responseSelector: '[class*="response"], [class*="markdown"], [class*="assistant"], [class*="message"]',
+    submitSelector: 'button[aria-label="Send Message"], button[aria-label*="Send" i], button[type="submit"]',
+    responseSelector: '[class*="response"], [class*="markdown"], [class*="assistant"], [class*="message"], .prose',
     thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"]',
     useEnterToSubmit: false,
     waitBeforeSubmit: 600,
     fillInput(el, text) {
+      // claude uses ProseMirror — must use execCommand
+      el.focus();
       __askall_fillContentEditable(el, text);
     }
   },
 
-  "www.phind.com": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[type="submit"], button[aria-label*="send" i], button[class*="send"], button[class*="search"]',
-    responseSelector: '[class*="prose"], [class*="markdown"], [class*="answer"], [class*="response"]',
-    thinkingSelector: '[class*="loading"], [class*="generating"], [class*="searching"], [class*="typing"]',
-    useEnterToSubmit: false,
-    waitBeforeSubmit: 800,
-    fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillReactTextarea(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
-    }
-  },
 
-  "huggingface.co": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[type="submit"], button[aria-label*="send" i], button[class*="send"]',
-    responseSelector: '[class*="prose"], [class*="markdown"], [class*="assistant"], [class*="message"]',
-    thinkingSelector: '[class*="loading"], [class*="generating"], [class*="stop"], [class*="typing"]',
-    useEnterToSubmit: false,
-    waitBeforeSubmit: 600,
-    fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillReactTextarea(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
-    }
-  },
-
-  "poe.com": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[class*="send"], button[aria-label*="send" i], button[type="submit"]',
-    responseSelector: '[class*="markdown"], [class*="Message_bot"], [class*="response"], [class*="assistant"]',
-    thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"], [class*="typing"]',
-    useEnterToSubmit: false,
-    waitBeforeSubmit: 600,
-    fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillReactTextarea(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
-    }
-  },
-
-  "yiyan.baidu.com": {
-    inputSelector: 'textarea#chat-textarea, textarea, [contenteditable="true"][class*="edit"], [contenteditable="true"]',
-    submitSelector: '[class*="send"], [class*="submit"], button[type="submit"]',
-    responseSelector: '[class*="markdown"], [class*="message-content"], [class*="answer"], [class*="bot"], [class*="assistant"]',
-    thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"], [class*="typing"]',
+  "www.sogou.com": {
+    inputSelector: 'textarea, [contenteditable="true"], input[type="text"]',
+    submitSelector: '[aria-label="发送消息"], button[class*="send"], button[type="submit"], [class*="submit"]',
+    responseSelector: '[class*="markdown"], [class*="message-content"], [class*="answer"], [class*="assistant"]',
+    thinkingSelector: '[class*="generating"], [class*="typing"]',
     useEnterToSubmit: true,
-    waitBeforeSubmit: 800,
+    waitBeforeSubmit: 600,
     fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillViaExecCommand(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
+      __askall_fillViaExecCommand(el, text);
+    }
+  },
+
+  "chat.baidu.com": {
+    inputSelector: '#chat-textarea, textarea, [contenteditable="true"]',
+    submitSelector: '#sendBtn, button[class*="send"], button[type="submit"]',
+    responseSelector: '[class*="markdown"], [class*="message-content"]',
+    thinkingSelector: '[class*="generating"]',
+    useEnterToSubmit: true,
+    waitBeforeSubmit: 600,
+    fillInput(el, text) {
+      __askall_fillViaExecCommand(el, text);
     }
   },
 
   "chatglm.cn": {
-    inputSelector: "textarea",
-    submitSelector: '[class*="send"], button[type="submit"], button[aria-label*="send" i]',
-    responseSelector: '[class*="markdown"], [class*="message-content"], [class*="answer"], [class*="assistant"]',
+    inputSelector: 'textarea, .el-textarea__inner, [contenteditable="true"], [role="textbox"]',
+    submitSelector: '[data-testid="send"], button[class*="send"], [class*="send-btn"], button[type="submit"]',
+    responseSelector: '[class*="markdown"]:not(svg):not([class*="name"]), [class*="message-content"]:not([class*="name"]), [class*="answer"]:not([class*="name"])',
     thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"], [class*="typing"]',
     useEnterToSubmit: true,
-    waitBeforeSubmit: 500,
+    waitBeforeSubmit: 800,
     fillInput(el, text) {
       __askall_fillViaExecCommand(el, text);
     }
@@ -305,7 +290,7 @@ window.__ASKALL_ADAPTERS = {
 
   "yuanbao.tencent.com": {
     inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: '[class*="send"], button[type="submit"], button[aria-label*="send" i]',
+    submitSelector: 'button[class*="send"], form button, button[type="submit"]',
     responseSelector: '[class*="markdown"], [class*="message-content"], [class*="answer"], [class*="assistant"]',
     thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"], [class*="typing"]',
     useEnterToSubmit: false,
@@ -319,31 +304,27 @@ window.__ASKALL_ADAPTERS = {
     }
   },
 
-  "www.meta.ai": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[type="submit"], button[aria-label*="send" i], div[role="button"][aria-label*="send" i]',
+
+  "copilot.microsoft.com": {
+    inputSelector: 'textarea#userInput, textarea, [contenteditable="true"], [role="textbox"]',
+    submitSelector: 'button[aria-label="Submit"], button.submit, button[type="submit"], button[aria-label*="send" i]',
+    responseSelector: '[class*="response"], [class*="markdown"], [class*="assistant"], [class*="message"], [class*="content"]',
+    thinkingSelector: '[class*="loading"], [class*="generating"], [class*="typing"], [class*="progress"], [class*="stop"]',
+    useEnterToSubmit: false,
+    waitBeforeSubmit: 800,
+    fillInput(el, text) {
+      __askall_fillViaExecCommand(el, text);
+    }
+  },
+  "build.nvidia.com": {
+    inputSelector: 'textarea, [contenteditable="true"][role="textbox"]',
+    submitSelector: 'button[aria-label*="Send" i], button[aria-label*="submit" i], button[type="submit"], button[class*="send" i]',
     responseSelector: '[class*="markdown"], [class*="response"], [class*="assistant"], [class*="message-content"]',
     thinkingSelector: '[class*="loading"], [class*="generating"], [class*="typing"], [class*="progress"]',
     useEnterToSubmit: false,
-    waitBeforeSubmit: 800,
+    waitBeforeSubmit: 1000,
     fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
-        __askall_fillReactTextarea(el, text);
-      } else {
-        __askall_fillContentEditable(el, text);
-      }
-    }
-  },
-
-  "copilot.microsoft.com": {
-    inputSelector: 'textarea, [contenteditable="true"]',
-    submitSelector: 'button[type="submit"], button[aria-label*="send" i], button[aria-label*="submit" i], button[class*="send"]',
-    responseSelector: '[class*="response"], [class*="markdown"], [class*="assistant"], [class*="message"]',
-    thinkingSelector: '[class*="loading"], [class*="generating"], [class*="typing"], [class*="progress"]',
-    useEnterToSubmit: false,
-    waitBeforeSubmit: 800,
-    fillInput(el, text) {
-      if (el.tagName === "TEXTAREA") {
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
         __askall_fillReactTextarea(el, text);
       } else {
         __askall_fillContentEditable(el, text);

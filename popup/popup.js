@@ -18,23 +18,22 @@
         { name: "Claude", url: "https://claude.ai/", hostname: "claude.ai" },
         { name: "Grok", url: "https://grok.com/", hostname: "grok.com" },
         { name: "Copilot", url: "https://copilot.microsoft.com/", hostname: "copilot.microsoft.com" },
-        { name: "Mistral", url: "https://chat.mistral.ai/", hostname: "chat.mistral.ai" },
-        { name: "Poe", url: "https://poe.com/", hostname: "poe.com" },
+        { name: "Mistral", url: "https://chat.mistral.ai/chat", hostname: "chat.mistral.ai" },
       ]
     },
     {
       label: "General — Free",
       sites: [
         { name: "DeepSeek", url: "https://chat.deepseek.com/", hostname: "chat.deepseek.com" },
-        { name: "Meta AI", url: "https://www.meta.ai/", hostname: "www.meta.ai" },
+
         { name: "Kimi", url: "https://www.kimi.com/", hostname: "www.kimi.com" },
-        { name: "Qwen", url: "https://www.qianwen.com/", hostname: "www.qianwen.com" },
+        { name: "Qwen Think", url: "https://chat.qwen.ai/?thinking=true", hostname: "chat.qwen.ai" },
         { name: "Doubao", url: "https://www.doubao.com/chat/", hostname: "www.doubao.com" },
         { name: "Yuanbao", url: "https://yuanbao.tencent.com/", hostname: "yuanbao.tencent.com" },
         { name: "ChatGLM", url: "https://chatglm.cn/", hostname: "chatglm.cn" },
-        { name: "Yiyan", url: "https://yiyan.baidu.com/", hostname: "yiyan.baidu.com" },
+        { name: "Baidu Chat", url: "https://chat.baidu.com/search", hostname: "chat.baidu.com" },
+        { name: "Sogou AI", url: "https://www.sogou.com/aimode", hostname: "www.sogou.com" },
         { name: "MiniMax", url: "https://agent.minimax.io/", hostname: "agent.minimax.io" },
-        { name: "HuggingChat", url: "https://huggingface.co/chat/", hostname: "huggingface.co" },
       ]
     },
     {
@@ -47,8 +46,13 @@
     {
       label: "Specialized — Free",
       sites: [
-        { name: "Phind", url: "https://www.phind.com/", hostname: "www.phind.com" },
+
+        { name: "NVIDIA-Nemotron", url: "https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b", hostname: "build.nvidia.com" },
+        { name: "NVIDIA-MiniMax-M2.5", url: "https://build.nvidia.com/minimaxai/minimax-m2.5", hostname: "build.nvidia.com" },
+        { name: "NVIDIA-Kimi-K2.5", url: "https://build.nvidia.com/moonshotai/kimi-k2.5", hostname: "build.nvidia.com" },
+        { name: "NVIDIA-GLM5", url: "https://build.nvidia.com/z-ai/glm5", hostname: "build.nvidia.com" },
         { name: "Genspark", url: "https://www.genspark.ai/", hostname: "www.genspark.ai" },
+        { name: "Duck.ai", url: "https://duck.ai/", hostname: "duck.ai" },
         { name: "Reddit", url: "https://www.reddit.com/answers/", hostname: "www.reddit.com" },
       ]
     },
@@ -84,9 +88,12 @@
   const resetBtn = document.getElementById("reset-btn");
   const statusBar = document.getElementById("status-bar");
   const statusLabel = document.getElementById("status-label");
-  const progressFill = document.getElementById("progress-fill");
+  // progress bar is now multi-segment, updated via updateProgressBar()
   const responsesSection = document.getElementById("responses-section");
   const responsesContainer = document.getElementById("responses-container");
+  const emptyState = document.getElementById("empty-state");
+  const etaLabel = document.getElementById("eta-label");
+  const liveCounter = document.getElementById("live-counter");
   const copyAllBtn = document.getElementById("copy-all-btn");
   const exportMdBtn = document.getElementById("export-md-btn");
   const copyDebugBtn = document.getElementById("copy-debug-btn");
@@ -99,10 +106,15 @@
   const tplPanel = document.getElementById("tpl-panel");
 
   let pollIntervalId = null;
+  let autoRefreshId = null;
+  let autoRefreshActive = false;
   let allSelected = true;
   let prevDoneSet = new Set();
   let sendInFlight = false;
   let lastSentQuestion = "";
+  let etaTargetMs = 0;
+  let etaTickId = null;
+  let etaStreamingExtra = 0;
 
   // ============================================================
   //  SAFE MESSAGING
@@ -141,16 +153,10 @@
   // ============================================================
 
   const themeBtns = document.querySelectorAll(".theme-btn");
-  const sizeBtns = document.querySelectorAll(".size-btn");
 
   function applyTheme(name) {
     document.body.setAttribute("data-theme", name);
     themeBtns.forEach((b) => b.classList.toggle("active", b.dataset.theme === name));
-  }
-
-  function applySize(size) {
-    document.body.setAttribute("data-size", size);
-    sizeBtns.forEach((b) => b.classList.toggle("active", b.dataset.size === size));
   }
 
   function saveStrategies() {
@@ -161,10 +167,8 @@
     storageSet({ [STORAGE_KEY_STRATEGIES]: checked });
   }
 
-  // one IPC call instead of five
   storageGet([
     "askall_theme",
-    "askall_size",
     STORAGE_KEY_SITES,
     STORAGE_KEY_STRATEGIES,
     STORAGE_KEY_CUSTOM_SITES,
@@ -172,7 +176,6 @@
     if (!r) { r = {}; }
 
     applyTheme(r.askall_theme || "lumen");
-    applySize(r.askall_size || "m");
 
     renderSiteList(r[STORAGE_KEY_SITES] || null);
     if (r[STORAGE_KEY_SITES]) {
@@ -190,15 +193,9 @@
     }
   });
 
-  // save handlers
   themeBtns.forEach((b) => b.addEventListener("click", () => {
     applyTheme(b.dataset.theme);
     storageSet({ askall_theme: b.dataset.theme });
-  }));
-
-  sizeBtns.forEach((b) => b.addEventListener("click", () => {
-    applySize(b.dataset.size);
-    storageSet({ askall_size: b.dataset.size });
   }));
 
   document.querySelectorAll(".strategy-cb").forEach((cb) => {
@@ -284,7 +281,7 @@
         const favicon = document.createElement("img");
         favicon.className = "site-favicon";
         favicon.loading = "lazy";
-        favicon.dataset.lazySrc = `https://www.google.com/s2/favicons?domain=${site.hostname}&sz=32`;
+        favicon.src = `https://www.google.com/s2/favicons?domain=${site.hostname}&sz=32`;
         favicon.alt = "";
         favicon.onerror = function () { this.style.display = "none"; };
 
@@ -594,10 +591,13 @@
     responsesSection.classList.remove("hidden");
     responsesSection.classList.add("section-enter");
     responsesContainer.innerHTML = "";
+    if (emptyState) { emptyState.classList.add("hidden"); }
+    liveCounter.classList.remove("hidden", "done");
+    liveCounter.textContent = "0 / " + urls.length;
 
     urls.forEach((url, i) => {
       const hn = safeHostname(url);
-      appendResponseCard(hn, findSiteName(hn) || hn, i, url);
+      appendResponseCard(hn, findSiteNameByUrl(url) || hn, i, url);
     });
 
     sendMsg({ type: "ASKALL_SEND", urls, question }, (resp) => {
@@ -608,16 +608,6 @@
         if (activeCount > 0) {
           updateStatusUI("polling", skippedCount, urls.length);
           startPolling();
-          // open persistent panel if running inside the popup (not already a detached window)
-          if (!isDetachedWindow()) {
-            const sizeMap = { s: 460, m: 600, l: 770 };
-            const currentSize = document.body.getAttribute("data-size") || "m";
-            sendMsg({
-              type: "ASKALL_OPEN_PANEL",
-              width: sizeMap[currentSize] || 600,
-              height: 620,
-            });
-          }
         } else {
           updateStatusUI("error", 0, urls.length, "All sites unreachable.");
           resetSendButton();
@@ -645,25 +635,21 @@
 
   function updateStatusUI(phase, done, total, errMsg) {
     const dot = statusBar.querySelector(".status-dot");
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
     dot.style.background = "";
+
+    liveCounter.textContent = `${done} / ${total}`;
 
     if (phase === "sending") {
       dot.className = "status-dot active";
-      statusLabel.textContent = `Checking ${total} sites...`;
-      progressFill.className = "progress-fill active";
-      progressFill.style.width = "5%";
+      statusLabel.textContent = `Opening ${total} sites...`;
     } else if (phase === "polling") {
       dot.className = "status-dot active";
       statusLabel.textContent = `${done} / ${total} complete`;
-      progressFill.className = "progress-fill active";
-      progressFill.style.width = Math.max(pct, 10) + "%";
     } else if (phase === "done") {
       dot.className = "status-dot done";
       statusLabel.textContent = "All responses collected";
-      progressFill.className = "progress-fill done";
-      progressFill.style.width = "100%";
       statusBar.classList.add("all-done");
+      liveCounter.classList.add("done");
     } else if (phase === "error") {
       dot.className = "status-dot";
       dot.style.background = "var(--danger)";
@@ -671,17 +657,94 @@
     }
   }
 
+  function updateProgressBar(counts) {
+    const total = counts.done + counts.streaming + counts.confirming + counts.pending + counts.empty + counts.error + counts.skipped;
+    if (total === 0) { return; }
+
+    function pct(n) { return (n / total * 100).toFixed(1) + "%"; }
+
+    document.getElementById("seg-done").style.width = pct(counts.done);
+    document.getElementById("seg-streaming").style.width = pct(counts.streaming + counts.confirming);
+    document.getElementById("seg-pending").style.width = pct(counts.pending);
+    document.getElementById("seg-empty").style.width = pct(counts.empty);
+    document.getElementById("seg-error").style.width = pct(counts.error);
+    document.getElementById("seg-skipped").style.width = pct(counts.skipped);
+
+    const bd = document.getElementById("status-breakdown");
+    let html = "";
+    if (counts.done > 0) { html += `<span><i class="swatch swatch-done"></i>${counts.done} done</span>`; }
+    if (counts.confirming > 0) { html += `<span><i class="swatch swatch-confirming"></i>${counts.confirming} confirming</span>`; }
+    if (counts.streaming > 0) { html += `<span><i class="swatch swatch-streaming"></i>${counts.streaming} streaming</span>`; }
+    if (counts.pending > 0) { html += `<span><i class="swatch swatch-pending"></i>${counts.pending} waiting</span>`; }
+    if (counts.empty > 0) { html += `<span><i class="swatch swatch-empty"></i>${counts.empty} empty</span>`; }
+    if (counts.error > 0) { html += `<span><i class="swatch swatch-error"></i>${counts.error} error</span>`; }
+    if (counts.skipped > 0) { html += `<span><i class="swatch swatch-skipped"></i>${counts.skipped} skipped</span>`; }
+    bd.innerHTML = html;
+  }
+
   // ============================================================
-  //  POLLING
+  //  ETA COUNTDOWN (1-second tick)
+  // ============================================================
+
+  function startEtaCountdown() {
+    stopEtaCountdown();
+    etaTickId = setInterval(tickEta, 1000);
+  }
+
+  function stopEtaCountdown() {
+    if (etaTickId) { clearInterval(etaTickId); etaTickId = null; }
+    etaTargetMs = 0;
+    etaStreamingExtra = 0;
+  }
+
+  function tickEta() {
+    if (etaTargetMs <= 0) { return; }
+    const remaining = Math.max(0, Math.ceil((etaTargetMs - Date.now()) / 1000));
+    if (remaining <= 0) {
+      if (etaStreamingExtra > 0) {
+        etaLabel.classList.remove("hidden");
+        etaLabel.textContent = "ETA: waiting " + etaStreamingExtra + " streaming...";
+      } else {
+        etaLabel.classList.add("hidden");
+        etaLabel.textContent = "";
+      }
+      return;
+    }
+    etaLabel.classList.remove("hidden");
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    let text = "ETA: ";
+    if (m > 0) {
+      text += m + "m " + s + "s";
+    } else {
+      text += s + "s";
+    }
+    if (etaStreamingExtra > 0) {
+      text += " + " + etaStreamingExtra + " streaming";
+    }
+    if (etaLabel.textContent !== text) {
+      etaLabel.textContent = text;
+      etaLabel.classList.remove("eta-tick");
+      void etaLabel.offsetWidth;
+      etaLabel.classList.add("eta-tick");
+    }
+  }
+
+  // ============================================================
+  //  POLLING & AUTO-REFRESH
   // ============================================================
 
   function startPolling() {
     stopPolling();
-    pollIntervalId = setInterval(fetchStatus, 3000);
+    pollIntervalId = setInterval(fetchStatus, 6000);
+    startAutoRefresh();
+    startEtaCountdown();
   }
 
   function stopPolling() {
     if (pollIntervalId) { clearInterval(pollIntervalId); pollIntervalId = null; }
+    stopAutoRefresh();
+    stopEtaCountdown();
   }
 
   function fetchStatus() {
@@ -690,15 +753,61 @@
     });
   }
 
-  collectBtn.addEventListener("click", (e) => {
-    addRipple(collectBtn, e);
-    collectBtn.textContent = "Collecting...";
-    collectBtn.disabled = true;
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    autoRefreshActive = true;
+    applyRefreshUI();
+    autoRefreshId = setInterval(doCollectTick, 6000);
+  }
+
+  function stopAutoRefresh() {
+    autoRefreshActive = false;
+    if (autoRefreshId) { clearInterval(autoRefreshId); autoRefreshId = null; }
+    applyRefreshUI();
+  }
+
+  function applyRefreshUI() {
+    const label = collectBtn.querySelector(".btn-icon-label");
+    if (autoRefreshActive) {
+      collectBtn.classList.add("auto-active");
+      collectBtn.classList.remove("auto-stopped");
+      label.innerHTML = '<span class="auto-dot"></span>Auto';
+      collectBtn.title = "Click to pause auto-refresh";
+    } else {
+      collectBtn.classList.remove("auto-active");
+      label.textContent = "Refresh";
+      collectBtn.title = "Refresh responses from all tabs";
+    }
+  }
+
+  function doCollectTick() {
+    collectBtn.classList.add("auto-tick");
     sendMsg({ type: "ASKALL_COLLECT_ALL" }, (resp) => {
-      collectBtn.textContent = "Collect";
-      collectBtn.disabled = false;
+      if (resp && resp.tabs) { updateResponseCards(resp.tabs); }
+      setTimeout(() => collectBtn.classList.remove("auto-tick"), 300);
+    });
+  }
+
+  function doCollect() {
+    sendMsg({ type: "ASKALL_COLLECT_ALL" }, (resp) => {
       if (resp && resp.tabs) { updateResponseCards(resp.tabs); }
     });
+  }
+
+  collectBtn.addEventListener("click", () => {
+    if (autoRefreshActive) {
+      stopAutoRefresh();
+      collectBtn.classList.add("auto-stopped");
+      setTimeout(() => collectBtn.classList.remove("auto-stopped"), 600);
+      showToast("Auto-refresh paused");
+    } else {
+      collectBtn.disabled = true;
+      doCollect();
+      setTimeout(() => {
+        collectBtn.disabled = false;
+        flashFeedback(collectBtn, "Updated!", true);
+      }, 600);
+    }
   });
 
   resetBtn.addEventListener("click", (e) => {
@@ -715,12 +824,25 @@
     responsesSection.classList.add("hidden");
     statusBar.classList.remove("all-done");
     statusBar.classList.add("hidden");
+    if (emptyState) { emptyState.classList.remove("hidden"); }
+    etaLabel.classList.add("hidden");
+    etaLabel.textContent = "";
+    liveCounter.classList.add("hidden");
+    liveCounter.classList.remove("done");
 
     resetSendButton();
     collectBtn.disabled = true;
 
     sendMsg({ type: "ASKALL_STOP_ALL" });
     showToast("Reset — ready for new question");
+  });
+
+  document.getElementById("reload-btn").addEventListener("click", () => {
+    showToast("Reloading extension...");
+    const reopenUrl = chrome.runtime.getURL("popup/popup.html?tab=1");
+    chrome.storage.local.set({ askall_reopen: reopenUrl }, () => {
+      setTimeout(() => { chrome.runtime.reload(); }, 300);
+    });
   });
 
   // ============================================================
@@ -734,6 +856,12 @@
   function findSiteName(hn) {
     const m = DEFAULT_SITES.find((s) => s.hostname === hn);
     return m ? m.name : null;
+  }
+
+  function findSiteNameByUrl(url) {
+    const m = DEFAULT_SITES.find((s) => s.url === url);
+    if (m) { return m.name; }
+    return findSiteName(safeHostname(url));
   }
 
   function formatElapsed(ms) {
@@ -752,7 +880,7 @@
 
     card.innerHTML = `
       <div class="response-card-header">
-        <span class="response-site-name">${escapeHtml(siteName)}</span>
+        <a class="response-site-name site-link" href="#" title="Jump to tab">${escapeHtml(siteName)}</a>
         <span class="response-status pending">pending</span>
       </div>
       <div class="response-body response-body-empty"></div>
@@ -765,6 +893,14 @@
         <button class="btn-copy-single">Copy</button>
       </div>
     `;
+
+    card.querySelector(".site-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      const tid = card.dataset.tabId;
+      if (tid && !isNaN(parseInt(tid, 10))) {
+        chrome.tabs.update(parseInt(tid, 10), { active: true });
+      }
+    });
 
     card.querySelector(".btn-copy-single").addEventListener("click", () => {
       const text = card.querySelector(".response-body").textContent || "";
@@ -790,7 +926,7 @@
           card.querySelector(".response-status").textContent = "retrying";
           card.querySelector(".response-body").className = "response-body response-body-empty";
           card.querySelector(".response-body").textContent = "";
-          prevDoneSet.delete(hostname);
+          prevDoneSet.delete(url);
           startPolling();
         }
       });
@@ -802,11 +938,18 @@
   function updateResponseCards(tabs) {
     let totalCount = 0;
     let doneCount = 0;
+    const counts = { done: 0, streaming: 0, confirming: 0, pending: 0, empty: 0, error: 0, skipped: 0 };
 
-    for (const [_tabId, info] of Object.entries(tabs)) {
+    for (const [tabId, info] of Object.entries(tabs)) {
       totalCount++;
-      const card = responsesContainer.querySelector(`.response-card[data-hostname="${info.hostname}"]`);
+      let card = null;
+      const allCards = responsesContainer.querySelectorAll(".response-card");
+      for (const c of allCards) {
+        if (c.dataset.url === info.url) { card = c; break; }
+      }
       if (!card) { continue; }
+
+      card.dataset.tabId = tabId;
 
       const statusEl = card.querySelector(".response-status");
       const bodyEl = card.querySelector(".response-body");
@@ -814,23 +957,40 @@
       const wordsStat = card.querySelector('[data-stat="words"]');
       const timeStat = card.querySelector('[data-stat="time"]');
 
-      const isDone = info.status === "done" || info.status === "timeout";
+      const isDone = info.status === "done";
+      const isTimeout = info.status === "timeout";
       const isError = info.status === "error";
       const isSkipped = info.status === "skipped";
       const isPolling = info.status === "polling";
 
-      if (isDone || isError || isSkipped) { doneCount++; }
+      if (isDone || isTimeout || isError || isSkipped) { doneCount++; }
+
+      if (isDone) { counts.done++; }
+      else if (isTimeout) { counts.error++; }
+      else if (isError) { counts.error++; }
+      else if (isSkipped) { counts.skipped++; }
+      else if (isPolling && info.stabilityProgress > 0) { counts.confirming++; }
+      else if (isPolling) { counts.streaming++; }
+      else if (info.status === "empty") { counts.empty++; }
+      else { counts.pending++; }
 
       statusEl.className = "response-status";
       if (isDone) {
         statusEl.classList.add("done");
         statusEl.textContent = "done";
+      } else if (isTimeout) {
+        statusEl.classList.add("error");
+        statusEl.textContent = "timeout";
       } else if (isSkipped) {
         statusEl.classList.add("skipped");
         statusEl.textContent = "skipped";
       } else if (isError) {
         statusEl.classList.add("error");
         statusEl.textContent = "error";
+      } else if (isPolling && info.stabilityProgress > 0) {
+        statusEl.classList.add("confirming");
+        const secLeft = (10 - info.stabilityProgress) * 6;
+        statusEl.textContent = `confirming ${info.stabilityProgress}/10 · ${secLeft}s`;
       } else if (isPolling) {
         statusEl.classList.add("polling");
         statusEl.textContent = "streaming";
@@ -839,9 +999,9 @@
         statusEl.textContent = info.status || "pending";
       }
 
-      // expand card when content arrives, done, error, or skipped
+      // expand card when content arrives, done, error, timeout, or skipped
       const hasContent = !!info.response;
-      if (hasContent || isDone || isError || isSkipped) {
+      if (hasContent || isDone || isTimeout || isError || isSkipped) {
         card.classList.remove("collapsed");
       }
 
@@ -861,26 +1021,59 @@
       timeStat.textContent = formatElapsed(info.elapsedMs);
 
       // retry button visibility
-      if (isError) {
+      if (isError || isTimeout) {
         retryBtn.classList.remove("hidden");
       } else {
         retryBtn.classList.add("hidden");
       }
 
       // done animation
-      if (isDone && !prevDoneSet.has(info.hostname)) {
-        prevDoneSet.add(info.hostname);
+      if (isDone && !prevDoneSet.has(info.url)) {
+        prevDoneSet.add(info.url);
         card.classList.remove("card-done");
         void card.offsetWidth;
         card.classList.add("card-done");
       }
-      if (isError && !prevDoneSet.has(info.hostname)) {
-        prevDoneSet.add(info.hostname);
+      if ((isError || isTimeout) && !prevDoneSet.has(info.url)) {
+        prevDoneSet.add(info.url);
         card.classList.add("card-error");
       }
     }
 
+    // compute ETA from the slowest CONFIRMING site only;
+    // streaming sites (progress = 0) have unknown finish time
+    let maxConfirmingSec = 0;
+    let streamingCount = 0;
+    for (const [_tabId, info] of Object.entries(tabs)) {
+      const isFinal = info.status === "done" || info.status === "timeout" ||
+                       info.status === "error" || info.status === "skipped";
+      if (isFinal) { continue; }
+      const progress = info.stabilityProgress || 0;
+      if (progress > 0) {
+        const remaining = (10 - progress) * 6;
+        if (remaining > maxConfirmingSec) { maxConfirmingSec = remaining; }
+      } else {
+        streamingCount++;
+      }
+    }
+    if (maxConfirmingSec > 0 && doneCount < totalCount) {
+      etaTargetMs = Date.now() + maxConfirmingSec * 1000;
+      etaStreamingExtra = streamingCount;
+      tickEta();
+    } else if (streamingCount > 0 && doneCount < totalCount) {
+      etaTargetMs = 0;
+      etaStreamingExtra = streamingCount;
+      etaLabel.classList.remove("hidden");
+      etaLabel.textContent = "ETA: waiting " + streamingCount + " streaming...";
+    } else {
+      etaTargetMs = 0;
+      etaStreamingExtra = 0;
+      etaLabel.classList.add("hidden");
+      etaLabel.textContent = "";
+    }
+
     if (totalCount > 0) {
+      updateProgressBar(counts);
       if (doneCount >= totalCount) {
         stopPolling();
         updateStatusUI("done", doneCount, totalCount);
@@ -924,7 +1117,7 @@
     a.download = `askall-report-${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast("Exported as Markdown");
+    flashFeedback(exportMdBtn, "Done!", true);
   });
 
   // ============================================================
@@ -932,57 +1125,142 @@
   // ============================================================
 
   copyDebugBtn.addEventListener("click", (e) => {
-    addRipple(copyDebugBtn, e);
-    copyDebugBtn.textContent = "Collecting...";
+    copyDebugBtn.querySelector(".btn-action-label").textContent = "Collecting...";
     copyDebugBtn.disabled = true;
 
     sendMsg({ type: "ASKALL_DEBUG_ALL" }, (resp) => {
-      copyDebugBtn.textContent = "Debug";
+      copyDebugBtn.querySelector(".btn-action-label").textContent = "Debug";
       copyDebugBtn.disabled = false;
 
       if (!resp || !resp.debugEntries || resp.debugEntries.length === 0) {
-        showToast("No errors to debug");
+        flashFeedback(copyDebugBtn, "Empty", false);
         return;
       }
 
       const now = new Date().toISOString();
+      const total = resp.debugEntries.length;
+      const done = resp.debugEntries.filter((e) => e.status === "done").length;
+      const errs = resp.debugEntries.filter((e) => e.status === "error" || e.status === "timeout").length;
+
       let report = `=== AskAll Debug Report ===\n`;
       report += `Time: ${now}\n`;
       report += `Question: ${resp.question || lastSentQuestion || "N/A"}\n`;
-      report += `Error/Timeout sites: ${resp.debugEntries.length}\n`;
-      report += `${"=".repeat(50)}\n\n`;
+      report += `Sites: ${total} total, ${done} done, ${errs} error/timeout\n`;
+      report += `${"=".repeat(60)}\n\n`;
 
       resp.debugEntries.forEach((entry, idx) => {
-        report += `--- [${idx + 1}] ${entry.hostname} ---\n`;
+        report += `--- [${idx + 1}/${total}] ${entry.hostname} [${entry.status}] ---\n`;
         report += `URL: ${entry.url}\n`;
         report += `Status: ${entry.status}\n`;
-        report += `Error message: ${entry.response || "N/A"}\n`;
-        report += `Sent at: ${entry.createdAt}\n`;
-        report += `Failed at: ${entry.doneAt || "still pending"}\n`;
+        report += `Response: ${entry.response ? entry.response.slice(0, 200) + (entry.response.length > 200 ? "..." : "") : "N/A"}\n`;
+        report += `Sent: ${entry.createdAt}\n`;
+        report += `Done: ${entry.doneAt || "still running"}\n`;
         report += `Elapsed: ${entry.elapsedMs}ms\n`;
 
         const d = entry.pageDiag;
         if (d && !d.error) {
-          report += `Page title: ${d.pageTitle}\n`;
-          report += `Current URL: ${d.currentUrl}\n`;
-          report += `Adapter: ${d.adapterUsed}\n`;
-          report += `Selectors:\n`;
+          report += `\n[Page Info]\n`;
+          report += `  Title: ${d.pageTitle}\n`;
+          report += `  URL: ${d.currentUrl}\n`;
+          if (d.userAgent) { report += `  UA: ${d.userAgent}\n`; }
+          report += `  Body text: ${d.bodyTextLength} chars\n`;
+          report += `  Forms: ${d.formsCount}\n`;
+
+          report += `\n[Adapter Config]\n`;
+          report += `  Adapter: ${d.adapterUsed}\n`;
+          if (d.adapterConfig) {
+            report += `  useEnterToSubmit: ${d.adapterConfig.useEnterToSubmit}\n`;
+            report += `  waitBeforeSubmit: ${d.adapterConfig.waitBeforeSubmit}ms\n`;
+            report += `  hasFillInput: ${d.adapterConfig.hasFillInput}\n`;
+          }
+
+          report += `\n[Selectors]\n`;
           report += `  input: ${d.selectors.input}\n`;
           report += `  submit: ${d.selectors.submit}\n`;
           report += `  response: ${d.selectors.response}\n`;
           report += `  thinking: ${d.selectors.thinking}\n`;
-          report += `DOM probe:\n`;
-          report += `  inputFound: ${d.domProbe.inputFound} (${d.domProbe.inputTag || "-"})\n`;
-          report += `  submitFound: ${d.domProbe.submitFound} (${d.domProbe.submitTag || "-"})\n`;
-          report += `  responseCount: ${d.domProbe.responseCount}\n`;
+
+          report += `\n[Input Element]\n`;
+          if (d.domProbe.inputDetail) {
+            const inp = d.domProbe.inputDetail;
+            report += `  found: true\n`;
+            report += `  tag: ${inp.tag}, id: ${inp.id || "-"}, type: ${inp.type || "-"}\n`;
+            report += `  class: ${inp.className || "-"}\n`;
+            report += `  placeholder: ${inp.placeholder || "-"}\n`;
+            report += `  contentEditable: ${inp.contentEditable}\n`;
+            report += `  value.length: ${inp.hasValue}, textContent.length: ${inp.hasTextContent}\n`;
+          } else {
+            report += `  found: false\n`;
+          }
+
+          report += `\n[Submit Button]\n`;
+          if (d.domProbe.submitDetail) {
+            const sub = d.domProbe.submitDetail;
+            report += `  found: true\n`;
+            report += `  tag: ${sub.tag}, id: ${sub.id || "-"}, type: ${sub.type || "-"}\n`;
+            report += `  class: ${sub.className || "-"}\n`;
+            report += `  ariaLabel: ${sub.ariaLabel || "-"}\n`;
+            report += `  disabled: ${sub.disabled}, ariaDisabled: ${sub.ariaDisabled || "-"}\n`;
+            report += `  visible: ${sub.visible}, hasSvg: ${sub.hasSvg}\n`;
+            report += `  text: ${sub.textContent || "-"}\n`;
+          } else {
+            report += `  found: false\n`;
+          }
+
+          report += `\n[Response]\n`;
+          report += `  count: ${d.domProbe.responseCount}\n`;
           report += `  thinkingVisible: ${d.domProbe.thinkingVisible}\n`;
-          report += `  lastResponseLength: ${d.lastResponseLength}\n`;
-          report += `  stabilityCounter: ${d.stabilityCounter}\n`;
+          if (d.domProbe.responseDetail && d.domProbe.responseDetail.length > 0) {
+            d.domProbe.responseDetail.forEach((r) => {
+              report += `  [${r.index}] ${r.tag} .${r.className} (${r.textLength} chars)\n`;
+            });
+          }
+
+          report += `\n[Polling State]\n`;
+          if (d.pollingState) {
+            report += `  isPolling: ${d.pollingState.isPolling}\n`;
+            report += `  lastResponseLength: ${d.pollingState.lastResponseLength}\n`;
+            report += `  stabilityCounter: ${d.pollingState.stabilityCounter}\n`;
+          }
+
+          if (d.pageButtons && d.pageButtons.length > 0) {
+            report += `\n[Page Buttons (${d.pageButtons.length})]\n`;
+            d.pageButtons.forEach((b, i) => {
+              report += `  [${i}] ${b.tag} label="${b.ariaLabel}" text="${b.text}" disabled=${b.disabled} visible=${b.visible}\n`;
+            });
+          }
+
           if (d.errorHints && d.errorHints.length > 0) {
-            report += `Page error hints:\n`;
+            report += `\n[Page Alerts/Errors]\n`;
             d.errorHints.forEach((hint) => {
               report += `  - ${hint.slice(0, 200)}\n`;
             });
+          }
+
+          if (d.domSnapshot) {
+            const snap = d.domSnapshot;
+            if (snap.allInputs && snap.allInputs.length > 0) {
+              report += `\n[All Input Elements (${snap.allInputs.length})]\n`;
+              snap.allInputs.forEach((inp, i) => {
+                report += `  [${i}] ${inp.tag} id="${inp.id}" class="${inp.class}" placeholder="${inp.placeholder}" editable=${inp.contentEditable} visible=${inp.visible}`;
+                if (inp.dataAttrs) { report += ` data=[${inp.dataAttrs}]`; }
+                report += `\n`;
+              });
+            }
+            if (snap.allSendElements && snap.allSendElements.length > 0) {
+              report += `\n[All Send-like Elements (${snap.allSendElements.length})]\n`;
+              snap.allSendElements.forEach((el, i) => {
+                report += `  [${i}] ${el.tag} id="${el.id}" label="${el.ariaLabel}" text="${el.text}" class="${el.class}" visible=${el.visible} disabled=${el.disabled}\n`;
+              });
+            }
+            if (snap.inputAreaHtml) {
+              report += `\n[Input Area HTML (${snap.inputAreaHtml.length} chars)]\n`;
+              report += snap.inputAreaHtml.slice(0, 3000) + "\n";
+            }
+            if (snap.bodyHtmlTruncated) {
+              report += `\n[Body HTML (truncated, ${snap.fullPageHtmlLength} total chars)]\n`;
+              report += snap.bodyHtmlTruncated.slice(0, 5000) + "\n";
+            }
           }
         } else if (d) {
           report += `Page diagnostics: ${d.error}\n`;
@@ -991,7 +1269,7 @@
       });
 
       copyText(report);
-      showToast("Debug report copied");
+      flashFeedback(copyDebugBtn, "Copied!", true);
     });
   });
 
@@ -1000,7 +1278,6 @@
   // ============================================================
 
   copyAllBtn.addEventListener("click", (e) => {
-    addRipple(copyAllBtn, e);
     const cards = responsesContainer.querySelectorAll(".response-card");
     if (cards.length === 0) { return; }
     let text = "";
@@ -1010,6 +1287,7 @@
       text += `=== ${name} ===\n${body}\n\n`;
     });
     copyText(text.trim());
+    flashFeedback(copyAllBtn, "Copied!", true);
   });
 
   function copyText(text) {
@@ -1027,6 +1305,28 @@
       document.body.removeChild(ta);
       showToast("Copied to clipboard");
     });
+  }
+
+  function flashFeedback(btn, text, success) {
+    const label = btn.querySelector(".btn-action-label") || btn.querySelector(".btn-icon-label");
+    const origText = label ? label.textContent : btn.textContent;
+    const feedbackClass = success ? "feedback-ok" : "feedback-fail";
+
+    if (label) {
+      label.textContent = text;
+    } else {
+      btn.textContent = text;
+    }
+    btn.classList.add(feedbackClass);
+
+    setTimeout(() => {
+      if (label) {
+        label.textContent = origText;
+      } else {
+        btn.textContent = origText;
+      }
+      btn.classList.remove(feedbackClass);
+    }, 1500);
   }
 
   let toastTimer = null;
@@ -1049,18 +1349,13 @@
   }
 
   function isDetachedWindow() {
-    return window.location.search.includes("detached=1");
+    return window.location.search.includes("detached=1") ||
+      window.location.search.includes("tab=1");
   }
 
-  // ============================================================
-  //  DEFERRED FAVICON LOADING
-  // ============================================================
-
-  requestAnimationFrame(() => {
-    document.querySelectorAll("img[data-lazy-src]").forEach((img) => {
-      img.src = img.dataset.lazySrc;
-    });
-  });
+  if (isDetachedWindow()) {
+    document.body.classList.add("detached");
+  }
 
   // ============================================================
   //  RESTORE STATE
@@ -1076,11 +1371,16 @@
     responsesSection.classList.remove("hidden");
     statusBar.classList.remove("hidden");
     collectBtn.disabled = false;
+    if (emptyState) { emptyState.classList.add("hidden"); }
+    liveCounter.classList.remove("hidden");
 
     entries.forEach(([_tabId, info], i) => {
-      const existing = responsesContainer.querySelector(`.response-card[data-hostname="${info.hostname}"]`);
+      let existing = false;
+      responsesContainer.querySelectorAll(".response-card").forEach((c) => {
+        if (c.dataset.url === info.url) { existing = true; }
+      });
       if (!existing) {
-        appendResponseCard(info.hostname, findSiteName(info.hostname) || info.hostname, i, info.url);
+        appendResponseCard(info.hostname, findSiteNameByUrl(info.url) || info.hostname, i, info.url);
       }
     });
 
