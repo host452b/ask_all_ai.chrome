@@ -16,5 +16,6 @@ Thumbs.db
 # Dependencies
 node_modules/
 
-# Archives
+# Archives / releases
 *.zip
+releases/
