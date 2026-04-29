@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AskAll — Ask Multiple AI Chatbots, Compare Side by Side",
-  "version": "1.6.0",
+  "version": "1.6.4",
   "description": "Send one question to ChatGPT, Gemini, Claude, DeepSeek, Grok & 17+ AI chatbots at once. Compare responses side by side.",
   "permissions": [
     "tabs",
@@ -69,6 +69,7 @@
         "https://yuanbao.tencent.com/*"
       ],
       "js": [
+        "content/extract-helpers.js",
         "content/site-adapters.js",
         "content/content-script.js"
       ],

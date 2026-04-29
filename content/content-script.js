@@ -22,9 +22,19 @@
     return;
   }
 
+  // text-extraction helpers — see content/extract-helpers.js. defined in a
+  // separate file so the test suite can load them without a browser; the
+  // manifest loads extract-helpers.js before this script.
+  const helpers = window.__ASKALL_HELPERS || {};
+  const cleanResponseText = helpers.cleanResponseText;
+  const readElementText = helpers.readElementText;
+  const mergeResponseText = helpers.mergeResponseText;
+  const pickBestResponseElement = helpers.pickBestResponseElement;
+
   let pollingTimer = null;
   let stabilityCounter = 0;
   let lastResponseText = "";
+  let accumulatedResponse = "";
   let pollEverStarted = false;
   let preExistingPageText = "";
   const STABILITY_THRESHOLD = 10;
@@ -379,25 +389,13 @@
     return false;
   }
 
-  const UI_NOISE = /^(Copy|Copied|复制|已复制|Retry|重试|Edit|编辑|Share|分享|Like|Dislike|Good|Bad|👍|👎)[\s]*$/;
-
-  function cleanResponseText(text) {
-    if (!text) { return ""; }
-    return text
-      .split("\n")
-      .filter((line) => !UI_NOISE.test(line.trim()))
-      .join("\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-
   function extractLatestResponse() {
     try {
       // primary: precise selector extraction
       const elements = queryAll(adapter.responseSelector);
       if (elements.length > 0) {
-        const lastEl = elements[elements.length - 1];
-        const text = cleanResponseText(lastEl.innerText || lastEl.textContent || "");
+        const best = pickBestResponseElement(elements, readElementText);
+        const text = readElementText(best);
         if (text.length > 10) { return text; }
       }
 
@@ -433,6 +431,7 @@
     stopPolling();
     stabilityCounter = 0;
     lastResponseText = "";
+    accumulatedResponse = "";
     pollEverStarted = true;
     preExistingPageText = extractLatestResponse();
     let lastSentText = "";
@@ -444,51 +443,74 @@
       // hard cap: runaway protection
       if (Date.now() - startTime > MAX_POLL_DURATION_MS) {
         stopPolling();
-        sendStatus("timeout", extractLatestResponse());
+        const finalText = extractAndAccumulate(preExistingText);
+        sendStatus("timeout", finalText);
         return;
       }
       // idle cap: nothing has changed for too long — give up
       if (Date.now() - lastChangeTime > IDLE_TIMEOUT_MS) {
         stopPolling();
-        sendStatus("timeout", extractLatestResponse());
+        const finalText = extractAndAccumulate(preExistingText);
+        sendStatus("timeout", finalText);
         return;
       }
 
       const thinking = isStillThinking();
       const currentText = extractLatestResponse();
+      const merged = extractAndAccumulate(preExistingText, currentText);
 
       // ignore pre-existing response from previous conversation
-      const isNewResponse = currentText !== preExistingText;
+      const isNewResponse = merged && merged !== preExistingText;
 
-      if (isNewResponse && currentText && currentText === lastResponseText) {
+      // stability is measured against the accumulator, not the raw snapshot —
+      // virtualized lists make raw snapshots oscillate as the viewport scrolls
+      if (isNewResponse && merged === lastResponseText) {
         stabilityCounter++;
       } else {
         stabilityCounter = 0;
       }
 
-      // bump activity timer when something is still moving: response text
-      // changes, or the "thinking" indicator is visible (e.g. pre-TTFB waits)
-      if (currentText !== lastResponseText || thinking) {
+      // bump activity timer when something is still moving: accumulator grows,
+      // raw snapshot changes (viewport scroll counts as activity too), or the
+      // "thinking" indicator is visible (e.g. pre-TTFB waits)
+      if (merged !== lastResponseText || currentText !== lastSentText || thinking) {
         lastChangeTime = Date.now();
       }
 
-      lastResponseText = currentText;
+      lastResponseText = merged;
 
       // send progress on every tick so the UI can show confirming countdown
       const progress = isNewResponse ? stabilityCounter : 0;
-      const textChanged = currentText !== lastSentText;
+      const textChanged = merged !== lastSentText;
       if (textChanged || progress > 0) {
-        sendStatus("polling", currentText, progress);
-        lastSentText = currentText;
+        sendStatus("polling", merged, progress);
+        lastSentText = merged;
       }
 
-      const normalDone = !thinking && isNewResponse && stabilityCounter >= STABILITY_THRESHOLD && currentText.length > 0;
-      const forceDone = isNewResponse && stabilityCounter >= STABILITY_THRESHOLD_FORCE && currentText.length > 0;
+      const normalDone = !thinking && isNewResponse && stabilityCounter >= STABILITY_THRESHOLD && merged.length > 0;
+      const forceDone = isNewResponse && stabilityCounter >= STABILITY_THRESHOLD_FORCE && merged.length > 0;
       if (normalDone || forceDone) {
         stopPolling();
-        sendStatus("done", currentText, STABILITY_THRESHOLD);
+        sendStatus("done", merged, STABILITY_THRESHOLD);
       }
     }, POLL_INTERVAL_MS);
+  }
+
+  // run extractLatestResponse + merge into accumulator. caller passes the
+  // pre-existing snapshot so we can reset the accumulator if the active reply
+  // is wholly inside the pre-existing page text (i.e. we haven't seen any new
+  // content yet).
+  function extractAndAccumulate(preExistingText, snapshotOverride) {
+    const snapshot = snapshotOverride !== undefined ? snapshotOverride : extractLatestResponse();
+    if (!snapshot) {
+      return accumulatedResponse;
+    }
+    if (snapshot === preExistingText) {
+      // still showing the prior conversation — don't pollute the accumulator
+      return preExistingText;
+    }
+    accumulatedResponse = mergeResponseText(accumulatedResponse, snapshot);
+    return accumulatedResponse;
   }
 
   function stopPolling() {
@@ -719,8 +741,12 @@
     }
 
     if (msg.type === "ASKALL_COLLECT") {
-      const text = extractLatestResponse();
-      const hasNewContent = pollEverStarted && text !== preExistingPageText;
+      const snapshot = extractLatestResponse();
+      if (snapshot && snapshot !== preExistingPageText) {
+        accumulatedResponse = mergeResponseText(accumulatedResponse, snapshot);
+      }
+      const text = accumulatedResponse || snapshot;
+      const hasNewContent = pollEverStarted && text && text !== preExistingPageText;
       let status;
       if (pollingTimer) {
         status = "polling";

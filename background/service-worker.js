@@ -81,16 +81,17 @@ function safeGetTab(tabId) {
   return activeTabs[tabId] || null;
 }
 
+// count CJK characters individually (Chinese / Japanese kana have no inter-
+// word spaces, so space-tokenizing alone reports e.g. 600 Chinese chars as
+// ~40 "words"). western runs of non-CJK chars are still counted by
+// whitespace tokens.
 function countWords(text) {
   if (!text) { return 0; }
-  let count = 0;
-  let inWord = false;
-  for (let i = 0; i < text.length; i++) {
-    const isSpace = text[i] === " " || text[i] === "\n" || text[i] === "\t" || text[i] === "\r";
-    if (!isSpace && !inWord) { count++; inWord = true; }
-    if (isSpace) { inWord = false; }
-  }
-  return count;
+  // CJK Unified Ideographs + Extension A + Hiragana + Katakana
+  const cjkRegex = /[㐀-䶿一-鿿぀-ゟ゠-ヿ]/g;
+  const cjkCount = (text.match(cjkRegex) || []).length;
+  const western = text.replace(cjkRegex, " ").trim().split(/\s+/).filter(Boolean).length;
+  return cjkCount + western;
 }
 
 function updateCachedWordCount(info) {

@@ -80,7 +80,10 @@ window.__ASKALL_ADAPTERS = {
   "www.perplexity.ai": {
     inputSelector: '#ask-input[data-lexical-editor="true"], [data-lexical-editor="true"][contenteditable="true"], textarea',
     submitSelector: 'button[aria-label="Submit"], button[aria-label="Ask"], button[type="submit"], button[class*="submit"], button[class*="send"]',
-    responseSelector: '[class*="prose"], [class*="markdown"], [class*="response-text"], [class*="answer"]',
+    // canonical first: Perplexity wraps each answer in #markdown-content-N.
+    // broader fallbacks last so we don't pick up sidebar/related-question
+    // panels as the primary match.
+    responseSelector: '[id^="markdown-content"], [class*="prose"], [class*="response-text"], [class*="answer"]',
     thinkingSelector: '[class*="animate-pulse"], [class*="skeleton"], [class*="searching"]',
     useEnterToSubmit: false,
     waitBeforeSubmit: 1000,
@@ -96,7 +99,11 @@ window.__ASKALL_ADAPTERS = {
   "gemini.google.com": {
     inputSelector: 'rich-textarea .ql-editor[contenteditable="true"], rich-textarea [contenteditable="true"], .ql-editor[contenteditable="true"], [contenteditable="true"].ql-editor, .input-area-container textarea, div[contenteditable="true"]',
     submitSelector: 'button[aria-label="Send message"], button[aria-label*="Send" i], button.send-button, .send-button-container button, button[data-testid*="send" i]',
-    responseSelector: 'message-content, .model-response-text, .response-container, [class*="markdown"], .response-content',
+    // most specific first: the actual response markdown lives in
+    // #model-response-message-content<id>. include broader fallbacks last so
+    // we don't pick up "thinking thoughts" panels or citation footers as the
+    // primary match.
+    responseSelector: '[id^="model-response-message-content"], .markdown.markdown-main-panel, message-content .markdown, message-content, .model-response-text, .response-container, .response-content',
     thinkingSelector: '.loading-indicator, .thinking-indicator, model-response[is-streaming], [class*="loading"], [class*="generating"]',
     useEnterToSubmit: true,
     waitBeforeSubmit: 800,
@@ -260,7 +267,12 @@ window.__ASKALL_ADAPTERS = {
   "claude.ai": {
     inputSelector: '[contenteditable="true"], textarea',
     submitSelector: 'button[aria-label="Send Message"], button[aria-label*="Send" i], button[type="submit"]',
-    responseSelector: '[class*="response"], [class*="markdown"], [class*="assistant"], [class*="message"], .prose',
+    // .font-claude-response is the canonical wrapper for each assistant turn
+    // (contains both thinking and response markdown). do NOT use
+    // [class*="message"] — Claude's user-message div has class
+    // "!font-user-message ..." which would match and make lastEl be the user
+    // prompt instead of the response.
+    responseSelector: '.font-claude-response, [class*="claude-response"]',
     thinkingSelector: '[class*="stop"], [class*="loading"], [class*="generating"]',
     useEnterToSubmit: false,
     waitBeforeSubmit: 600,

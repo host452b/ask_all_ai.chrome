@@ -1,0 +1,9 @@
+{
+  "name": "askall-extension",
+  "version": "1.6.4",
+  "private": true,
+  "description": "AskAll Chrome extension — dev tooling. The published extension is built from /content, /background, /popup, /icons + manifest.json.",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}
